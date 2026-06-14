@@ -1,0 +1,45 @@
+# --- Credenciais ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# --- Ambiente virtual ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Dados e logs do pipeline ---
+logs/
+*.log
+data/
+*.pdf
+notebooks/.ipynb_checkpoints/
+
+# --- IDEs / SO ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Ferramentas locais (não versionar) ---
+.claude/
+openspec/
+
+# --- Testes ---
+.pytest_cache/
+.coverage
+htmlcov/

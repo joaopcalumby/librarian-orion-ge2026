@@ -150,14 +150,16 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
-def extract(pdf_bytes: bytes, extractor: Extractor = "docling") -> str:
+def extract(pdf_bytes: bytes, extractor: Extractor = "pymupdf") -> str:
     """
     Extrai texto limpo do PDF.
 
-    `extractor="docling"` (default) usa Docling e devolve markdown estruturado;
-    `extractor="pymupdf"` usa PyMuPDF, deduplica headers/footers e devolve
-    texto plano. Em ambos os casos a saída passa pelas mesmas regras de
-    limpeza (`_clean`).
+    `extractor="pymupdf"` (default) deduplica headers/footers e devolve texto
+    plano — escolhido como default depois que Docling apresentou `std::bad_alloc`
+    em papers maiores no setup local (CPU/Windows), entregando saída truncada.
+    `extractor="docling"` continua disponível para papers curtos / setup com
+    GPU em que o markdown estruturado vale a troca. Em ambos os casos a saída
+    passa pelas mesmas regras de limpeza (`_clean`).
     """
     if not pdf_bytes:
         raise PdfExtractionError("pdf_bytes está vazio")

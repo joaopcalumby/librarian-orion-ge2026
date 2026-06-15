@@ -41,7 +41,47 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  pipeline:
+    build: .
+    image: librarian-pipeline:latest
+    container_name: librarian_pipeline
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_started
+    environment:
+      # Dentro da rede do compose os hosts são os nomes dos serviços, não
+      # localhost. As variáveis abaixo sobrescrevem o que vem do .env.
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET_BRONZE: ${MINIO_BUCKET_BRONZE:-librarian-bronze}
+      MINIO_SECURE: "False"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-librarian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-librarian}
+      POSTGRES_DB: ${POSTGRES_DB:-librarian}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-librarian_chunks}
+      ARXIV_DEFAULT_N: ${ARXIV_DEFAULT_N:-5}
+      ARXIV_REQUEST_DELAY_SECONDS: ${ARXIV_REQUEST_DELAY_SECONDS:-3.0}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1200}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
+    volumes:
+      # Persiste cache do HuggingFace entre execuções para não rebaixar
+      # os 2.3GB do BGE-M3 toda vez.
+      - hf_cache:/root/.cache/huggingface
+    profiles:
+      - run   # só sobe quando explicitamente requisitado
+                          # (docker compose --profile run run --rm pipeline --query ...)
+
 volumes:
   minio_data:
   postgres_data:
   qdrant_data:
+  hf_cache:

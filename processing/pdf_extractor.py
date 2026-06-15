@@ -142,6 +142,9 @@ def _cut_references(text: str) -> str:
 
 
 def _clean(text: str) -> str:
+    # NUL bytes (0x00) aparecem em PDFs com fontes mal mapeadas e quebram
+    # campos TEXT do Postgres — remover antes de qualquer outra coisa.
+    text = text.replace("\x00", "")
     text = _dehyphenate(text)
     text = _drop_page_numbers(text)
     text = _cut_references(text)

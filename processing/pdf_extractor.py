@@ -1,22 +1,3 @@
-"""
-Extração de texto limpo de PDFs de papers.
-
-Dois extratores intercambiáveis:
-- `docling` (default): bom em layouts complexos (duas colunas, tabelas),
-  já entrega markdown estruturado que descarta muito ruído.
-- `pymupdf`: rápido, texto cru por página — usamos para deduplicar
-  headers/footers que se repetem entre páginas.
-
-Em ambos os caminhos aplicamos as mesmas regras de limpeza estrutural:
-- Dehifenização de quebras de linha (`word-\nword` -> `wordword`).
-- Remoção de linhas que são só números de página.
-- Corte da seção de referências bibliográficas até o fim.
-
-Para Docling, headers/footers já são em geral removidos pelo próprio export
-para markdown; para PyMuPDF aplicamos dedup explícito olhando o topo e a
-base de cada página.
-"""
-
 from __future__ import annotations
 
 import io
@@ -25,7 +6,7 @@ import re
 from collections import Counter
 from typing import Literal
 
-import fitz  # PyMuPDF
+import fitz
 from docling.datamodel.base_models import DocumentStream
 from docling.document_converter import DocumentConverter
 
@@ -38,21 +19,16 @@ class PdfExtractionError(Exception):
     """Erro durante extração; o orquestrador captura e marca o paper como falho."""
 
 
-# Cabeçalhos que iniciam a seção de referências; truncamos a partir daí.
 _REFERENCES_HEADING = re.compile(
     r"^\s{0,3}#{0,6}\s*(References|Referências|Bibliography|Works Cited)\s*:?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
-# Linha cujo conteúdo é apenas número de página (eventualmente com "Page N").
 _PAGE_NUMBER_LINE = re.compile(r"^\s*(?:page\s+)?\d{1,4}\s*$", re.IGNORECASE)
 
-# Hifenização no fim de linha: "retrie-\nval" -> "retrieval".
 _DEHYPHENATE = re.compile(r"(\w)-\n(\w)")
 
 
-# Cliente Docling reutilizado entre chamadas: o construtor é caro (baixa
-# modelos na primeira execução).
 _docling_converter: DocumentConverter | None = None
 
 
@@ -65,7 +41,6 @@ def _get_docling() -> DocumentConverter:
 
 
 def _extract_pages_pymupdf(pdf_bytes: bytes) -> list[str]:
-    """Lista com o texto cru de cada página."""
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
@@ -81,7 +56,6 @@ def _extract_pages_pymupdf(pdf_bytes: bytes) -> list[str]:
 
 
 def _extract_markdown_docling(pdf_bytes: bytes) -> str:
-    """Markdown estruturado do documento inteiro (já com headers/footers descartados)."""
     converter = _get_docling()
     stream = DocumentStream(name="paper.pdf", stream=io.BytesIO(pdf_bytes))
     try:
@@ -92,10 +66,6 @@ def _extract_markdown_docling(pdf_bytes: bytes) -> str:
 
 
 def _strip_repeated_headers_footers(pages: list[str], threshold: float = 0.5) -> list[str]:
-    """
-    Remove primeiras/últimas linhas que se repetem em >=threshold das páginas.
-    Cobre cabeçalho institucional e rodapé do tipo "Preprint - Lab X".
-    """
     if len(pages) < 3:
         return pages
 
@@ -142,28 +112,16 @@ def _cut_references(text: str) -> str:
 
 
 def _clean(text: str) -> str:
-    # NUL bytes (0x00) aparecem em PDFs com fontes mal mapeadas e quebram
-    # campos TEXT do Postgres — remover antes de qualquer outra coisa.
     text = text.replace("\x00", "")
     text = _dehyphenate(text)
     text = _drop_page_numbers(text)
     text = _cut_references(text)
-    # Compactar 3+ quebras em uma.
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
 def extract(pdf_bytes: bytes, extractor: Extractor = "pymupdf") -> str:
-    """
-    Extrai texto limpo do PDF.
-
-    `extractor="pymupdf"` (default) deduplica headers/footers e devolve texto
-    plano — escolhido como default depois que Docling apresentou `std::bad_alloc`
-    em papers maiores no setup local (CPU/Windows), entregando saída truncada.
-    `extractor="docling"` continua disponível para papers curtos / setup com
-    GPU em que o markdown estruturado vale a troca. Em ambos os casos a saída
-    passa pelas mesmas regras de limpeza (`_clean`).
-    """
+    
     if not pdf_bytes:
         raise PdfExtractionError("pdf_bytes está vazio")
 

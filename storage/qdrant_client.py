@@ -1,14 +1,3 @@
-"""
-Cliente Qdrant para o Ouro (vetores).
-
-Cada ponto na collection é identificado pelo `chunk_id` (mesmo UUID gerado
-pelo chunker e usado como PK no Postgres). Distância coseno, dimensão fixa
-em `settings.VECTOR_DIM` (1024 para BGE-M3 dense).
-
-Payload mínimo (só `arxiv_id`) — metadados ricos ficam no Postgres, o que
-torna o índice mais leve e a fonte de verdade textual única.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -49,17 +38,14 @@ def upsert_vectors(
     chunks_with_vectors: Iterable[dict],
     name: str = settings.QDRANT_COLLECTION,
 ) -> int:
-    """
-    Faz upsert dos vetores. Cada item deve ter pelo menos `chunk_id`,
-    `vector` e `arxiv_id`. Retorna o número de pontos enviados.
-    """
+
     items = list(chunks_with_vectors)
     if not items:
         return 0
 
     points = [
         qm.PointStruct(
-            id=item["chunk_id"],          # mesmo UUID do Postgres
+            id=item["chunk_id"],
             vector=item["vector"],
             payload={"arxiv_id": item["arxiv_id"]},
         )
@@ -76,7 +62,6 @@ def search(
     limit: int = 5,
     name: str = settings.QDRANT_COLLECTION,
 ) -> list[dict]:
-    """Helper de busca por similaridade — útil pra debugar e pra fase futura do RAG."""
     result = client.query_points(
         collection_name=name,
         query=query_vector,

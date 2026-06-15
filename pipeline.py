@@ -1,18 +1,3 @@
-"""
-Pipeline end-to-end do Librarian.
-
-Fluxo: tema do usuário -> arXiv -> download de PDF -> MinIO (Bronze) ->
-extração de texto -> chunking -> vetorização BGE-M3 -> PostgreSQL (texto)
-+ Qdrant (vetores), com o mesmo `chunk_id` ligando as duas pontas.
-
-Resiliência: cada paper é processado isoladamente; uma falha em download,
-extração ou vetorização marca o paper como falho no log final mas não trava
-os demais.
-
-Uso:
-    python pipeline.py --query "graph neural networks" --n 5
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -46,7 +31,7 @@ class PaperOutcome:
     success: bool
     chunks: int = 0
     error: Optional[str] = None
-    stage: Optional[str] = None  # estágio onde falhou
+    stage: Optional[str] = None
 
 
 @dataclass
@@ -82,9 +67,9 @@ def _process_paper(
     qdrant_client,
     extractor: str,
 ) -> PaperOutcome:
-    """Encadeia extração -> chunking -> vetorização -> Postgres+Qdrant para um paper."""
+
     arxiv_id = paper["arxiv_id"]
-    minio_obj = paper["_minio_pdf_object"]  # injetado pelo orquestrador
+    minio_obj = paper["_minio_pdf_object"]
     pdf_bytes = paper["_pdf_bytes"]
 
     try:
@@ -108,17 +93,16 @@ def _process_paper(
     try:
         logger.info("[%s] vetorizando %d chunks...", arxiv_id, len(chunks))
         chunks_with_vecs = vectorize_chunks(chunks)
-    except Exception as e:  # noqa: BLE001 — vetorização pode estourar de mil formas
+    except Exception as e:
         return PaperOutcome(arxiv_id=arxiv_id, success=False, stage="vectorize", error=str(e))
 
     try:
         logger.info("[%s] persistindo no Postgres + Qdrant...", arxiv_id)
-        # Sessão Postgres por paper: falha em um paper não derruba os outros.
         with postgres_client.session() as pg_conn:
             postgres_client.upsert_paper(pg_conn, paper)
             postgres_client.insert_chunks(pg_conn, chunks_with_vecs, session_id=session_id)
         upsert_vectors(qdrant_client, chunks_with_vecs)
-    except Exception as e:  # noqa: BLE001 — Postgres/Qdrant podem estourar diversos erros
+    except Exception as e:
         return PaperOutcome(arxiv_id=arxiv_id, success=False, stage="persist", error=str(e))
 
     return PaperOutcome(arxiv_id=arxiv_id, success=True, chunks=len(chunks))
@@ -151,8 +135,6 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
         minio, settings.MINIO_BUCKET_BRONZE, session_id, papers
     )
 
-    # Re-download em memória para passar pra extração (evita re-baixar do MinIO)
-    # — o download_papers já gravou os bytes; aqui leio de volta apenas dos sucessos.
     by_id = {p["arxiv_id"]: p for p in papers}
     pdfs_for_pipeline: list[dict] = []
     for r in download_results:
@@ -161,7 +143,6 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
                 PaperOutcome(arxiv_id=r.arxiv_id, success=False, stage="download", error=r.error)
             )
             continue
-        # Lê o PDF do MinIO de volta — é a forma honesta de provar o Bronze
         response = minio.get_object(settings.MINIO_BUCKET_BRONZE, r.pdf_object)
         try:
             pdf_bytes = response.read()
@@ -178,8 +159,6 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
     if not pdfs_for_pipeline:
         return summary
 
-    # 3-6. Inicializa schemas/coleções uma vez; processamento por paper abre
-    # sua própria transação para isolar falhas.
     qdrant = qdrant_connect()
     ensure_collection(qdrant)
     with postgres_client.session() as pg_conn:

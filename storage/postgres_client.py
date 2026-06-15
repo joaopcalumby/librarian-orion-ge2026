@@ -1,17 +1,3 @@
-"""
-Cliente PostgreSQL para o Ouro (texto).
-
-Schema:
-    papers          -- uma linha por paper (dedupado por arxiv_id, global)
-    chunks          -- uma linha por chunk (PK chunk_id; FK -> papers)
-    chunks_with_meta -- VIEW que junta chunks + papers para consulta direta
-                       por chunk_id (atende o spec gold-storage cenário
-                       "Localização do texto a partir do ID do vetor").
-
-Sessões diferentes inserem chunks novos (com chunk_id novo) mas reaproveitam
-a linha existente em `papers` se o `arxiv_id` já tiver sido visto.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -102,10 +88,6 @@ def init_schema(conn: psycopg.Connection) -> None:
 
 
 def upsert_paper(conn: psycopg.Connection, paper: dict) -> None:
-    """
-    Insere o paper se ainda não existe. Se já existe (mesmo `arxiv_id`),
-    não toca — assumimos que metadados do arXiv são estáveis.
-    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -130,13 +112,6 @@ def insert_chunks(
     chunks: Iterable[dict],
     session_id: str,
 ) -> int:
-    """
-    Insere um lote de chunks. Retorna o número de linhas inseridas.
-
-    Falha com erro de constraint se algum `chunk_id` já existir — o spec
-    proíbe sobrescrita silenciosa. O caller deve garantir que `upsert_paper`
-    rodou antes para o `arxiv_id` referenciado existir.
-    """
     rows = [
         {
             "chunk_id": c["chunk_id"],
@@ -163,7 +138,6 @@ def insert_chunks(
 
 
 def fetch_chunk_by_id(conn: psycopg.Connection, chunk_id: str) -> dict | None:
-    """Recupera um chunk completo (com metadados do paper) pelo `chunk_id`."""
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM chunks_with_meta WHERE chunk_id = %s", (chunk_id,))
         return cur.fetchone()

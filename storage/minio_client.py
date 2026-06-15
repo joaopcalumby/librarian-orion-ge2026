@@ -1,13 +1,3 @@
-"""
-Cliente MinIO para o estágio Bronze.
-
-Estrutura de paths:
-    sessions/{session_id}/pdfs/{arxiv_id}.pdf       -> PDF baixado do arXiv
-    sessions/{session_id}/metadata/{arxiv_id}.json  -> metadados do paper
-
-Cada sessão (execução do pipeline) tem seu próprio diretório lógico no bucket.
-"""
-
 import io
 import json
 import logging
@@ -24,7 +14,6 @@ def get_minio_client(endpoint: str, access_key: str, secret_key: str, secure: bo
 
 
 def ensure_bucket(client: Minio, bucket_name: str) -> None:
-    """Cria o bucket se não existir (idempotente)."""
     try:
         if not client.bucket_exists(bucket_name):
             client.make_bucket(bucket_name)
@@ -51,7 +40,7 @@ def upload_pdf(
     arxiv_id: str,
     pdf_bytes: bytes,
 ) -> str:
-    """Faz upload do PDF; retorna o object name."""
+
     object_name = _pdf_object_name(session_id, arxiv_id)
     client.put_object(
         bucket_name,
@@ -71,7 +60,7 @@ def upload_metadata(
     arxiv_id: str,
     paper: dict,
 ) -> str:
-    """Serializa e faz upload do JSON de metadados do paper; retorna o object name."""
+
     object_name = _metadata_object_name(session_id, arxiv_id)
 
     enriched = {

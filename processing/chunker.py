@@ -1,16 +1,3 @@
-"""
-Chunking do texto extraído de um paper.
-
-Estratégia: janela deslizante de `chunk_size` caracteres com `chunk_overlap` de
-sobreposição. O step efetivo é `chunk_size - chunk_overlap`. Quando possível,
-o corte respeita fronteira de sentença (último `. ` ou `\n`) dentro de uma
-janela curta de tolerância no fim do chunk — assim evitamos cortar palavras
-e mantemos chunks legíveis para o BGE-M3 e para citação.
-
-Defaults vêm de `config.settings` (1200 / 200, requisito do professor) mas
-podem ser sobrescritos via parâmetro para experimentos.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -22,20 +9,13 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-# Quanto recuar do fim do chunk procurando uma fronteira de sentença antes
-# de cortar duro. ~10% da janela funciona bem para textos acadêmicos.
 _BOUNDARY_LOOKBACK_RATIO = 0.10
 
 _BOUNDARY_RE = re.compile(r"[.!?]\s|\n")
 
 
 def _find_clean_cut(text: str, start: int, hard_end: int) -> int:
-    """
-    Devolve o índice (exclusivo) onde cortar o chunk.
 
-    Procura por uma fronteira de sentença numa janela `[soft_start, hard_end)`
-    no fim do chunk. Se não encontrar, devolve `hard_end` (corte duro).
-    """
     window = hard_end - start
     lookback = max(1, int(window * _BOUNDARY_LOOKBACK_RATIO))
     soft_start = max(start, hard_end - lookback)
@@ -52,13 +32,7 @@ def chunk_text(
     chunk_size: int = settings.CHUNK_SIZE,
     chunk_overlap: int = settings.CHUNK_OVERLAP,
 ) -> list[dict]:
-    """
-    Divide `text` em chunks e anexa metadados.
 
-    `paper_meta` deve conter no mínimo `arxiv_id`, `title`, `authors`, `arxiv_url`.
-    Cada chunk retornado é um dict com:
-        chunk_id, arxiv_id, title, authors, arxiv_url, chunk_index, chunk_text
-    """
     if chunk_size <= 0:
         raise ValueError("chunk_size deve ser > 0")
     if chunk_overlap < 0 or chunk_overlap >= chunk_size:
@@ -89,8 +63,6 @@ def chunk_text(
             index += 1
         if end >= n:
             break
-        # Avança a janela; se find_clean_cut recuou demais, o step protege
-        # contra loop infinito mantendo progresso mínimo.
         next_start = end - chunk_overlap
         if next_start <= start:
             next_start = start + step

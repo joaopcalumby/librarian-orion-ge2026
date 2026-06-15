@@ -1,14 +1,3 @@
-"""
-Vetorização de chunks com BGE-M3 (dense, 1024 dim).
-
-Usa `sentence-transformers` direto (API estável e leve). Auto-detecta CUDA
-quando disponível; em CPU funciona igual, só mais lento.
-
-A primeira chamada baixa ~2.3GB do HuggingFace Hub para
-`~/.cache/huggingface/` (ou `/root/.cache/huggingface/` dentro do container).
-Volume montado em docker-compose persiste esse cache entre execuções.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -42,10 +31,7 @@ def _get_model():
 
 
 def vectorize_chunks(chunks: list[dict], batch_size: int = 4) -> list[dict]:
-    """
-    Recebe os chunks do `chunker` e devolve a mesma lista enriquecida com
-    `vector` (list[float] de 1024 dim). Chunks com texto vazio são filtrados.
-    """
+    
     if not chunks:
         return []
 

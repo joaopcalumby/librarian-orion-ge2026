@@ -53,8 +53,6 @@ services:
       minio:
         condition: service_started
     environment:
-      # Dentro da rede do compose os hosts são os nomes dos serviços, não
-      # localhost. As variáveis abaixo sobrescrevem o que vem do .env.
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -73,12 +71,10 @@ services:
       CHUNK_SIZE: ${CHUNK_SIZE:-1200}
       CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
     volumes:
-      # Persiste cache do HuggingFace entre execuções para não rebaixar
-      # os 2.3GB do BGE-M3 toda vez.
+      # Persiste cache do HuggingFace entre execuções para não rebaixar os 2.3GB do BGE-M3 toda vez.
       - hf_cache:/root/.cache/huggingface
     profiles:
-      - run   # só sobe quando explicitamente requisitado
-                          # (docker compose --profile run run --rm pipeline --query ...)
+      - run
 
 volumes:
   minio_data:

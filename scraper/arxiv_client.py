@@ -1,14 +1,3 @@
-"""
-Cliente da API do arXiv.
-
-Usa a biblioteca `arxiv` (wrapper sobre o endpoint Atom oficial), que já cobre
-rate limiting e paginação. Documentação: https://info.arxiv.org/help/api/
-
-A função `search()` é o ponto de entrada usado pelo pipeline: recebe a query
-do usuário e devolve até N papers normalizados em dicts, prontos para o
-deduplicador e o downloader.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -40,11 +29,8 @@ def _get_client() -> arxiv.Client:
 
 
 def _normalize(result: arxiv.Result) -> dict:
-    """Converte um `arxiv.Result` no dict que o resto do pipeline consome."""
-    # `entry_id` vem como "http://arxiv.org/abs/2401.12345v2"; queremos
-    # o id curto sem versão para deduplicar e nomear o PDF.
-    short_id = result.get_short_id()  # ex.: "2401.12345v2"
-    arxiv_id = short_id.split("v")[0]  # ex.: "2401.12345"
+    short_id = result.get_short_id()
+    arxiv_id = short_id.split("v")[0]
 
     return {
         "arxiv_id": arxiv_id,
@@ -58,12 +44,6 @@ def _normalize(result: arxiv.Result) -> dict:
 
 
 def search(query: str, n: int = settings.ARXIV_DEFAULT_N) -> list[dict]:
-    """
-    Busca até `n` papers no arXiv que correspondam a `query`.
-
-    Retorna lista de dicts normalizados, já deduplicados por `arxiv_id`.
-    Lista vazia se a API não retornar nada.
-    """
     if not query or not query.strip():
         raise ValueError("query não pode ser vazia")
     if n <= 0:

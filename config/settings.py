@@ -31,7 +31,7 @@ QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "librarian_chunks")
 
 
-# --- Chunking (defaults do professor; ajustáveis sem alterar código) ---
+# --- Chunking (defaults; ajustáveis sem alterar código) ---
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 

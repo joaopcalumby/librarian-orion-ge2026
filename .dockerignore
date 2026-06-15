@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+logs/
+data/
+*.md
+.claude/
+openspec/
+notebooks/
+.pytest_cache/
+.coverage
+_smoke_*.py
+Dockerfile
+.dockerignore

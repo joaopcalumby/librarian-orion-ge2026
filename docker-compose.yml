@@ -41,10 +41,12 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  pipeline:
+  api:
     build: .
-    image: librarian-pipeline:latest
-    container_name: librarian_pipeline
+    image: librarian-api:latest
+    container_name: librarian_api
+    ports:
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +55,8 @@ services:
       minio:
         condition: service_started
     environment:
+      # Dentro da rede do compose os hosts são os nomes dos serviços, não
+      # localhost. As variáveis abaixo sobrescrevem o que vem do .env.
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -71,10 +75,10 @@ services:
       CHUNK_SIZE: ${CHUNK_SIZE:-1200}
       CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
     volumes:
-      # Persiste cache do HuggingFace entre execuções para não rebaixar os 2.3GB do BGE-M3 toda vez.
+      # Persiste cache do HuggingFace entre execuções para não rebaixar
+      # os 2.3GB do BGE-M3 toda vez.
       - hf_cache:/root/.cache/huggingface
-    profiles:
-      - run
+    restart: unless-stopped
 
 volumes:
   minio_data:

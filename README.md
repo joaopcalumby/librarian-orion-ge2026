@@ -1,95 +1,82 @@
-# Librarian
+# Librarian — Grupo de Estudos (branch `ge`)
 
-Sistema RAG (*Retrieval-Augmented Generation*) acadêmico de propósito geral. O usuário define um tema, o sistema busca papers no [arXiv](https://arxiv.org/), baixa os PDFs e processa o conteúdo completo até deixá-lo indexado como texto (PostgreSQL) e como vetores (Qdrant), prontos para serem consultados por um LLM nas próximas entregas.
+API HTTP interna do Librarian, focada no que cabe à entrega do **Grupo de Estudos de Engenharia de Dados do Laboratório Orion** (instrutor: Gean Santos, Maceió/2026).
 
-Projeto desenvolvido no **Grupo de Estudos de Engenharia de Dados do Laboratório Orion** (instrutor: Gean Santos, Maceió/2026).
-
----
-
-## Contexto e finalidade
-
-A entrega anterior do curso cobria apenas a **Geração** + **Bronze** sobre metadados/abstracts vindos de OpenAlex e Semantic Scholar. Esta entrega exige processar o **paper inteiro** (não só o abstract) até o **Ouro**: chunks textuais no Postgres, vetores no Qdrant, e localização do texto a partir do ID do vetor (vínculo bidirecional).
-
-Em paralelo, a fonte foi redirecionada para o **arXiv** — open access por padrão, API gratuita, sem paywall — e o sistema deixou de ser específico de aquicultura para virar uma ferramenta genérica parametrizada pelo tema do usuário.
+Esta branch contém **apenas o servidor interno** (ingestão + processamento + Ouro). A integração com LLM e interface gráfica fica no projeto principal nas branches `main` e `dev`.
 
 ---
 
-## O que o sistema faz
+## O que faz
 
-1. Recebe uma **query em texto livre** e um número de papers desejado (default: 5).
-2. **Busca no arXiv** os papers mais relevantes para a query.
-3. **Baixa os PDFs** com retry e validação de integridade (magic bytes `%PDF`).
-4. Armazena PDFs e metadados no **MinIO** (camada Bronze), organizados por sessão.
-5. **Extrai o texto limpo** de cada PDF.
-6. **Divide o texto em chunks** de tamanho controlado, com sobreposição, atribuindo um `chunk_id` único por chunk (UUIDv4).
-7. **Vetoriza cada chunk** com o modelo BGE-M3, produzindo embeddings densos de 1024 dimensões.
-8. **Persiste no Ouro**:
-   - texto dos chunks + metadados do paper no **PostgreSQL**;
-   - vetores no **Qdrant**, usando o mesmo `chunk_id` como identificador do ponto.
+Recebe **um documento por vez** via HTTP, processa o conteúdo e indexa em uma arquitetura medallion:
 
-O resultado é uma base consultável: a partir do ID de um vetor, é possível recuperar o texto original do chunk e os metadados do paper de origem (título, autores, URL no arXiv) numa única query.
+- **Bronze** — MinIO (PDFs brutos + metadados JSON, por sessão)
+- **Transformação** — extração de texto, limpeza, chunking (1200/200, configurável), vetorização BGE-M3
+- **Ouro** — PostgreSQL (texto + metadados) e Qdrant (vetores 1024-dim), com **mesmo `chunk_id` ligando as duas pontas**
+
+Suporta duas fontes via endpoints distintos:
+
+- **PDF** — upload direto do arquivo.
+- **Sites mapeados** — apenas domínios em whitelist cujo conteúdo principal é entregue no HTML (Medium, Towards Data Science, HuggingFace blog). Outros domínios retornam **404**.
 
 ---
 
-## Como faz — fluxo da operação
+## Endpoints
+
+| Método | Path | Body | Sucesso | Erros |
+|---|---|---|---|---|
+| `GET`  | `/health`  | — | `200 {"status":"ok"}` | — |
+| `GET`  | `/sources` | — | `200 {"allowed_hosts":[...]}` | — |
+| `POST` | `/pdf`     | `multipart/form-data` com campo `file` (PDF) | `200 IngestResponse` | `400` (vazio / não é PDF), `422` (extração falhou) |
+| `POST` | `/site`    | `application/json` `{"url": "..."}` | `200 IngestResponse` | `400` (URL vazia), `404` (domínio fora da whitelist), `422` (conteúdo vazio), `502` (falha de fetch) |
+
+**`IngestResponse`** = `{document_id, source_type, title, chunks, vectors, session_id}`.
+
+`document_id` é sintético, gerado dentro do servidor:
+- PDF: `pdf:<sha256[:12]>`
+- Site: `site:<host>:<sha256[:12]>`
+
+---
+
+## Fluxo interno
 
 ```
-Usuário ──► pipeline.py
-              │
-              ▼
-        arXiv API ──► metadados + pdf_url
-              │
-              ▼
-        MinIO (BRONZE) ──► sessions/{sid}/pdfs/{arxiv_id}.pdf
-              │                sessions/{sid}/metadata/{arxiv_id}.json
-              ▼
-        Extração de texto (PyMuPDF)
-        + limpeza (NUL bytes, hifenização, headers/footers, referências)
-              │
-              ▼
-        Chunking (1200 chars, overlap 200, fronteira de sentença, UUID por chunk)
-              │
-              ▼
-        Vetorização (BGE-M3 dense, 1024 dim)
-              │
-        ┌─────┴─────┐
-        ▼           ▼
-   PostgreSQL    Qdrant
-   (chunks +     (vetores,
-    metadados)    mesmo chunk_id)
+cliente externo
+    │  POST /pdf  ou  POST /site
+    ▼
+FastAPI (uvicorn, async; CPU-bound em threadpool)
+    │
+    ├── /pdf:  upload → magic bytes (%PDF) → extract (PyMuPDF)
+    └── /site: whitelist → fetch HTML (UA de browser) → trafilatura
+    │
+    ▼
+chunking (1200 chars / overlap 200, fronteira de sentença, UUID por chunk)
+    │
+    ▼
+vetorização (sentence-transformers + BAAI/bge-m3, 1024-dim, L2-normalizado)
+    │
+    ├──► PostgreSQL: papers + chunks + view chunks_with_meta
+    └──► Qdrant: collection com mesmo chunk_id como point id
 ```
 
-Resiliência: cada paper é processado em isolamento. Falha em download, extração ou vetorização registra o paper como falho no log final, sem interromper o processamento dos demais.
-
-### Pré-processamento dos dados — etapas
-
-| # | Etapa | Por quê |
-|---|---|---|
-| 1 | Download com retry exponencial (3 tentativas) | Rede acadêmica falha; transitórios resolvem com retentativa |
-| 2 | Validação de magic bytes (`%PDF`) | `Content-Type` é mentiroso quando há proxy; magic bytes são honestos |
-| 3 | Extração com PyMuPDF | Rápido, robusto, preserva ordem de leitura em layouts de duas colunas |
-| 4 | Strip de bytes `\x00` | PDFs com fontes mal mapeadas geram NUL bytes que Postgres `TEXT` rejeita |
-| 5 | Dehifenização (`pala-\nvra` → `palavra`) | Quebra de linha não pode partir termos técnicos antes da vetorização |
-| 6 | Remoção de números de página + headers/footers repetidos | Ruído estrutural sem valor semântico |
-| 7 | Corte da seção de referências | Lista de citações sem coerência de discurso degrada o índice |
-| 8 | Chunking com fronteira de sentença | Tamanho fixo (requisito) sem partir frases no meio |
-| 9 | Embedding L2-normalizado (BGE-M3 dense, 1024 dim) | Permite cosine similarity simples e estável no Qdrant |
+Em paralelo, `/pdf` também faz upload do PDF original ao Bronze (MinIO) só quando vier do pipeline batch da `pipeline.py`. A API atual processa o PDF em memória — o Bronze fica reservado para o caminho batch arXiv.
 
 ---
 
-## Stack e ferramentas
+## Stack
 
 | Camada | Ferramenta |
 |---|---|
-| Linguagem | Python 3.11 (no container) |
-| Empacotamento | Docker + docker-compose |
-| Fonte de dados | arXiv API (lib `arxiv`) |
-| Bronze | MinIO (S3-compatible) |
-| Extração de PDF | PyMuPDF (default), Docling (alternativa selecionável) |
-| Vetorização | `sentence-transformers` + [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) |
-| Ouro — texto | PostgreSQL 16 |
-| Ouro — vetores | Qdrant |
-| Orquestração | Script Python (`pipeline.py`) |
+| Servidor HTTP | FastAPI + uvicorn |
+| Cliente HTTP (fetch de sites) | httpx (async) |
+| Extração de site | trafilatura |
+| Extração de PDF | PyMuPDF |
+| Chunking | custom (janela deslizante com fronteira de sentença) |
+| Embeddings | `BAAI/bge-m3` via sentence-transformers (CPU) |
+| Ouro texto | PostgreSQL 16 |
+| Ouro vetor | Qdrant |
+| Bronze (pipeline batch) | MinIO |
+| Empacotamento | Docker + docker-compose (4 serviços) |
 
 ---
 
@@ -97,25 +84,28 @@ Resiliência: cada paper é processado em isolamento. Falha em download, extraç
 
 ```
 librarian-orion-ge2026/
-├── Dockerfile               # imagem do pipeline (Python 3.11)
-├── docker-compose.yml       # 4 serviços: pipeline, minio, postgres, qdrant
-├── pipeline.py              # orquestrador end-to-end
+├── Dockerfile
+├── docker-compose.yml          # api + postgres + qdrant + minio
 ├── requirements.txt
-├── .env.example             # template das variáveis de ambiente
+├── .env.example
+├── pipeline.py                 # CLI batch (arXiv → Ouro), opcional
+├── api/
+│   ├── server.py               # FastAPI com /pdf, /site, /health, /sources
+│   └── sources.py              # whitelist de domínios aceitos
 ├── config/
-│   └── settings.py          # toda configuração via .env
+│   └── settings.py
 ├── scraper/
-│   ├── arxiv_client.py      # busca no arXiv
-│   ├── pdf_downloader.py    # download de PDFs + upload Bronze
-│   └── deduplicator.py      # dedupe por arxiv_id
+│   ├── arxiv_client.py         # busca no arXiv (usado pelo pipeline batch)
+│   ├── pdf_downloader.py
+│   └── deduplicator.py
 ├── processing/
-│   ├── pdf_extractor.py     # texto limpo a partir dos PDFs
-│   ├── chunker.py           # janela 1200/200 com fronteira de sentença
-│   └── vectorizer.py        # BGE-M3 via sentence-transformers
+│   ├── pdf_extractor.py
+│   ├── chunker.py
+│   └── vectorizer.py
 └── storage/
-    ├── minio_client.py      # Bronze (PDFs + metadados)
-    ├── postgres_client.py   # Ouro de texto (papers, chunks, view)
-    └── qdrant_client.py     # Ouro de vetores
+    ├── minio_client.py
+    ├── postgres_client.py
+    └── qdrant_client.py
 ```
 
 ---
@@ -124,87 +114,85 @@ librarian-orion-ge2026/
 
 ### Pré-requisitos
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (ou Docker Engine + docker-compose v2)
-- Conexão de internet (a primeira execução baixa o modelo BGE-M3, ~2.3GB, do HuggingFace Hub; depois fica em cache em um volume Docker)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (ou Docker Engine + docker-compose v2).
+- Conexão de internet para a primeira execução: o modelo BGE-M3 (~2.3GB) é baixado uma vez e fica em um volume Docker (`hf_cache`).
 
 ### Setup
 
 ```bash
-# 1. Clone o repositório
-git clone https://github.com/joaopcalumby/librarian-orion-ge2026.git
+git clone -b ge https://github.com/joaopcalumby/librarian-orion-ge2026.git
 cd librarian-orion-ge2026
 
-# 2. Copie o exemplo de .env (os defaults batem com o docker-compose)
 cp .env.example .env
 
-# 3. Suba os bancos
-docker compose up -d minio postgres qdrant
-
-# 4. Construa a imagem do pipeline
-docker compose --profile run build pipeline
+docker compose up -d --build
 ```
 
-Crie o bucket Bronze pelo console do MinIO (uma vez):
+O serviço `api` fica disponível em **<http://localhost:8000>**. Documentação interativa do FastAPI em **<http://localhost:8000/docs>**.
 
-- Acesse <http://localhost:9001>
-- Login: `minioadmin` / `minioadmin`
-- Crie o bucket `librarian-bronze`
+Crie o bucket Bronze uma vez (apenas se for usar o `pipeline.py` batch):
 
-### Rodando o pipeline
+- <http://localhost:9001> · login `minioadmin/minioadmin` · criar bucket `librarian-bronze`.
+
+### Exemplos de uso
 
 ```bash
-# Busca 3 papers sobre o tema e processa o pipeline completo
-docker compose --profile run run --rm pipeline \
-  --query "graph neural networks" \
-  --n 3
+# Health
+curl http://localhost:8000/health
+
+# Listar domínios aceitos por /site
+curl http://localhost:8000/sources
+
+# Ingerir um PDF local
+curl -X POST http://localhost:8000/pdf -F "file=@paper.pdf"
+
+# Ingerir um artigo do Medium
+curl -X POST http://localhost:8000/site \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://medium.com/@ageitgey/machine-learning-is-fun-80ea3ec3c471"}'
+
+# Domínio fora da whitelist → 404
+curl -X POST http://localhost:8000/site \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com/qualquer-coisa"}'
 ```
 
-Opções da CLI:
-
-- `--query, -q` (obrigatório): tema da busca
-- `--n` (default 5): número de papers
-- `--extractor` (`pymupdf` ou `docling`, default `pymupdf`): extrator de texto
-- `--verbose, -v`: log com nível DEBUG
-
-### Inspecionando os resultados
+### Inspecionando o Ouro
 
 ```bash
-# Bronze (PDFs + metadados)
-# Console MinIO: http://localhost:9001 → bucket librarian-bronze → sessions/
+# Texto: lista de documentos indexados + contagem de chunks
+docker exec -it librarian_postgres psql -U librarian -d librarian \
+  -c "SELECT arxiv_id, title FROM papers ORDER BY first_seen_at DESC LIMIT 10" \
+  -c "SELECT arxiv_id, count(*) FROM chunks GROUP BY arxiv_id"
 
-# Ouro de texto
-docker exec -it librarian_postgres \
-  psql -U librarian -d librarian \
-  -c "SELECT count(*) FROM papers" \
-  -c "SELECT count(*) FROM chunks" \
-  -c "SELECT chunk_id, arxiv_id, chunk_index FROM chunks_with_meta LIMIT 5"
-
-# Ouro de vetores
+# Vetores: total + busca pelo id de um chunk específico
 curl http://localhost:6333/collections/librarian_chunks
-
-# Vínculo Postgres ↔ Qdrant (use um chunk_id real)
 curl http://localhost:6333/collections/librarian_chunks/points/<chunk_id>
 ```
 
-### Performance esperada
+### Adicionando um novo domínio à whitelist
 
-Em **CPU** (caso de uso default do container), uma execução com 3 papers de tamanho médio (~30 páginas cada) leva **~3 a 4 minutos** após o cache do modelo. A vetorização concentra ~85% do tempo. Para acelerar, basta expor uma GPU ao container (requer NVIDIA Container Toolkit no host).
+Edite `api/sources.py` e inclua o host (sem `www.`) em `ALLOWED_HOSTS`. Reconstrua a imagem do `api`:
+
+```bash
+docker compose up -d --build api
+```
+
+### CLI batch (arXiv → Ouro, opcional)
+
+A CLI original ainda existe e roda o caminho completo via arXiv (busca por query, download para Bronze, etc.):
+
+```bash
+docker compose run --rm --entrypoint python api pipeline.py --query "graph neural networks" --n 3
+```
 
 ---
 
-## Próximos passos
+## Sobre as branches
 
-Itens fora do escopo desta entrega, planejados para as próximas:
+| Branch | Propósito |
+|---|---|
+| `main`, `dev` | Projeto principal (com LLM + interface gráfica nas próximas entregas) |
+| `ge`         | Entrega para o Grupo de Estudos: apenas o servidor interno desta documentação |
 
-1. **Interface Gradio** — campo de busca, chat com o LLM, exibição das citações.
-2. **Integração com LLM** — Groq ou HuggingFace Inference API, respostas geradas a partir dos chunks recuperados com citação ao paper original (URL do arXiv).
-3. **Retrieval híbrido** — combinar BGE-M3 (semântico) com BM25S (léxico) para reduzir falhas em queries muito específicas.
-4. **Sessões efêmeras** — dados deletados automaticamente ao encerrar a sessão do usuário.
-5. **Busca incremental** — comando "trazer mais papers sobre o mesmo tema" sem reprocessar os já indexados.
-6. **GPU no container** — habilitar CUDA via NVIDIA Container Toolkit para reduzir o tempo de vetorização.
-
----
-
-## Licença
-
-Projeto acadêmico desenvolvido no contexto do Grupo de Estudos de Engenharia de Dados do Laboratório Orion.
+A branch `ge` é o que foi pedido pelo professor do Grupo de Estudos: aplicação interna com endpoints `/pdf` e `/site` rodando em container Docker junto com os bancos.

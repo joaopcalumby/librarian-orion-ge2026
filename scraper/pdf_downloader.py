@@ -1,12 +1,3 @@
-"""
-Download de PDFs do arXiv para o Bronze (MinIO).
-
-Fluxo: para cada paper retornado pelo `arxiv_client`, baixa o PDF a partir
-do `pdf_url`, valida com magic bytes, e faz upload para o MinIO no caminho
-da sessão. Falha em um paper marca o paper como falho e segue para o próximo
-(isolamento de falha exigido pelo pipeline-orchestration).
-"""
-
 from __future__ import annotations
 
 import logging
@@ -41,11 +32,10 @@ class DownloadResult:
 
 
 class PdfValidationError(Exception):
-    """O conteúdo baixado não passou na validação de magic bytes do PDF."""
+    pass
 
 
 def _fetch_pdf_bytes(pdf_url: str) -> bytes:
-    """Baixa o PDF com retry exponencial em erros transitórios."""
     last_exc: Optional[Exception] = None
 
     for attempt in range(1, DOWNLOAD_MAX_RETRIES + 1):
@@ -57,7 +47,6 @@ def _fetch_pdf_bytes(pdf_url: str) -> bytes:
             )
             if response.status_code == 200:
                 return response.content
-            # 5xx é transitório; 4xx falha de vez (raise depois do loop)
             if 500 <= response.status_code < 600:
                 raise requests.HTTPError(
                     f"{response.status_code} {response.reason}",
@@ -93,12 +82,6 @@ def download_paper(
     session_id: str,
     paper: dict,
 ) -> DownloadResult:
-    """
-    Baixa o PDF de um paper e persiste no MinIO (PDF + metadados).
-
-    Não levanta exceção em falhas esperadas — devolve `DownloadResult` com
-    `success=False` e `error` preenchido para o orquestrador registrar e seguir.
-    """
     arxiv_id = paper["arxiv_id"]
     pdf_url = paper["pdf_url"]
 
@@ -130,13 +113,6 @@ def download_papers(
     session_id: str,
     papers: list[dict],
 ) -> list[DownloadResult]:
-    """
-    Baixa uma lista de papers em sequência, respeitando o rate limit do arXiv
-    (>=3s entre downloads consecutivos, via `ARXIV_REQUEST_DELAY_SECONDS`).
-
-    O delay é aplicado APÓS cada download (exceto o último), para que o caller
-    não precise aguardar se quiser apenas um paper.
-    """
     results: list[DownloadResult] = []
     total = len(papers)
 

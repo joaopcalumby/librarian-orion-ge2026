@@ -16,7 +16,7 @@ Extractor = Literal["docling", "pymupdf"]
 
 
 class PdfExtractionError(Exception):
-    """Erro durante extração; o orquestrador captura e marca o paper como falho."""
+    pass
 
 
 _REFERENCES_HEADING = re.compile(

@@ -11,9 +11,6 @@ from scraper.deduplicator import dedupe_by_arxiv_id
 logger = logging.getLogger(__name__)
 
 
-# Cliente único reutilizado entre chamadas: o `delay_seconds` da lib garante
-# que requisições consecutivas respeitam o rate limit recomendado pelo arXiv
-# (>=3s), mesmo quando duas chamadas a `search()` acontecem em sequência.
 _client: Optional[arxiv.Client] = None
 
 

@@ -1,34 +1,23 @@
-# --- Core ---
 python-dotenv>=1.0.0
 requests>=2.32.0
 
-# --- API HTTP ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.12
 httpx>=0.27.0
-
-# --- Extração de conteúdo de páginas web ---
 trafilatura>=1.12.0
 
-# --- arXiv ---
 arxiv>=2.1.3
-
-# --- Bronze (MinIO) ---
 minio>=7.2.0
 
-# --- Extração de PDF ---
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
 docling>=2.0.0
 
-# --- Vetorização ---
 sentence-transformers>=3.0.0
 torch>=2.2.0
 
-# --- Ouro ---
 psycopg[binary]>=3.2.0
 qdrant-client>=1.10.0
 
-# --- Troca de dados (notebook Colab opcional) ---
 pyarrow>=16.0.0

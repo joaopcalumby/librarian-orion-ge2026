@@ -1,21 +1,3 @@
-"""
-Servidor HTTP do Librarian (FastAPI assíncrono).
-
-Endpoints:
-    POST /pdf   — recebe um PDF (multipart/form-data), processa e indexa.
-    POST /site  — recebe { "url": "..." }, valida contra whitelist, fetch
-                  + extração do conteúdo principal, processa e indexa.
-    GET  /health — health check.
-
-Cada requisição processa **um documento por vez** (PDF ou página). O
-fluxo interno reusa exatamente os mesmos blocos do pipeline batch:
-extração → chunking → vetorização → Postgres + Qdrant, com o mesmo
-`chunk_id` (UUID) ligando texto e vetor.
-
-Operações pesadas (extração de PDF, vetorização, escrita em banco) rodam
-em threadpool via `asyncio.to_thread`, mantendo o event loop livre.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -40,13 +22,11 @@ from storage.qdrant_client import ensure_collection, upsert_vectors
 logger = logging.getLogger(__name__)
 
 
-# Estado de inicialização: schema + collection garantidos uma vez no startup.
 _qdrant = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Inicializa Postgres schema e Qdrant collection antes de aceitar requests."""
     global _qdrant
     logger.info("Inicializando schemas e collections...")
 
@@ -66,8 +46,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Librarian API", version="0.2.0", lifespan=lifespan)
 
 
-# ---------- modelos ----------
-
 class IngestResponse(BaseModel):
     document_id: str = Field(..., description="ID interno (arxiv_id) do documento")
     source_type: str = Field(..., description="'pdf' ou 'site'")
@@ -81,17 +59,11 @@ class SiteRequest(BaseModel):
     url: str
 
 
-# ---------- helpers ----------
-
 def _new_session_id() -> str:
     return f"api-{uuid.uuid4().hex[:8]}"
 
 
 def _ingest(document: dict, text: str, session_id: str) -> IngestResponse:
-    """
-    Núcleo síncrono compartilhado: chunking → vetorização → persistência.
-    Esperamos `document` já com {arxiv_id, title, authors, arxiv_url, ...}.
-    """
     if not text or not text.strip():
         raise HTTPException(status_code=422, detail="conteúdo extraído está vazio")
 
@@ -117,7 +89,6 @@ def _ingest(document: dict, text: str, session_id: str) -> IngestResponse:
 
 
 def _pdf_document(pdf_bytes: bytes, filename: str | None) -> dict:
-    """Constrói o dict de metadados de um PDF enviado direto pela API."""
     digest = hashlib.sha256(pdf_bytes).hexdigest()[:12]
     title = filename or f"pdf-{digest}"
     if title.lower().endswith(".pdf"):
@@ -135,7 +106,6 @@ def _pdf_document(pdf_bytes: bytes, filename: str | None) -> dict:
 
 
 def _site_document(url: str, extracted: dict) -> dict:
-    """Constrói o dict de metadados a partir do HTML extraído."""
     host = host_of(url)
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
     title = (extracted.get("title") or url).strip()
@@ -154,11 +124,8 @@ def _site_document(url: str, extracted: dict) -> dict:
 
 
 async def _fetch_html(url: str) -> str:
-    """Baixa o HTML da página de forma assíncrona.
-
-    Usa User-Agent de browser real porque Medium e similares retornam 403
-    para clientes que se identificam como bot/biblioteca.
-    """
+    # User-Agent de browser real: Medium e similares retornam 403 a clientes
+    # que se identificam como bot/biblioteca.
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -177,8 +144,6 @@ async def _fetch_html(url: str) -> str:
         raise HTTPException(status_code=502, detail=f"falha ao buscar URL: {e}") from e
 
 
-# ---------- endpoints ----------
-
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
@@ -186,13 +151,11 @@ async def health() -> dict:
 
 @app.get("/sources")
 async def sources() -> dict:
-    """Lista os domínios mapeados aceitos por /site."""
     return {"allowed_hosts": sorted(ALLOWED_HOSTS)}
 
 
 @app.post("/pdf", response_model=IngestResponse)
 async def ingest_pdf(file: UploadFile = File(...)) -> IngestResponse:
-    """Recebe um PDF, valida, extrai texto e indexa."""
     pdf_bytes = await file.read()
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="arquivo vazio")
@@ -215,7 +178,6 @@ async def ingest_pdf(file: UploadFile = File(...)) -> IngestResponse:
 
 @app.post("/site", response_model=IngestResponse)
 async def ingest_site(req: SiteRequest) -> IngestResponse:
-    """Recebe uma URL, valida contra whitelist, busca, extrai e indexa."""
     if not req.url or not req.url.strip():
         raise HTTPException(status_code=400, detail="url vazia")
     if not is_allowed(req.url):
@@ -228,7 +190,6 @@ async def ingest_site(req: SiteRequest) -> IngestResponse:
     html = await _fetch_html(req.url)
 
     def _extract_article():
-        # trafilatura é síncrono e CPU-bound; manter fora do event loop.
         text = trafilatura.extract(
             html,
             include_comments=False,

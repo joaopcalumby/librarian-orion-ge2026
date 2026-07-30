@@ -1,37 +1,32 @@
 """
 Extração de texto limpo de PDFs de papers.
 
-Dois extratores intercambiáveis:
-- `docling` (default): bom em layouts complexos (duas colunas, tabelas),
-  já entrega markdown estruturado que descarta muito ruído.
-- `pymupdf`: rápido, texto cru por página — usamos para deduplicar
-  headers/footers que se repetem entre páginas.
+Extrator único: `pymupdf` — rápido, texto cru por página, com dedup explícito
+de headers/footers olhando o topo e a base de cada página.
 
-Em ambos os caminhos aplicamos as mesmas regras de limpeza estrutural:
+Sobre a saída aplicamos as regras de limpeza estrutural:
 - Dehifenização de quebras de linha (`word-\nword` -> `wordword`).
 - Remoção de linhas que são só números de página.
 - Corte da seção de referências bibliográficas até o fim.
 
-Para Docling, headers/footers já são em geral removidos pelo próprio export
-para markdown; para PyMuPDF aplicamos dedup explícito olhando o topo e a
-base de cada página.
+O Docling foi avaliado e descartado: dava `std::bad_alloc` em papers maiores
+no setup local (CPU/Windows) e entregava saída truncada, além de arrastar
+torch/transformers próprios para a imagem. PyMuPDF entrega texto completo em
+menos de 1s.
 """
 
 from __future__ import annotations
 
-import io
 import logging
 import re
 from collections import Counter
 from typing import Literal
 
 import fitz  # PyMuPDF
-from docling.datamodel.base_models import DocumentStream
-from docling.document_converter import DocumentConverter
 
 logger = logging.getLogger(__name__)
 
-Extractor = Literal["docling", "pymupdf"]
+Extractor = Literal["pymupdf"]
 
 
 class PdfExtractionError(Exception):
@@ -51,19 +46,6 @@ _PAGE_NUMBER_LINE = re.compile(r"^\s*(?:page\s+)?\d{1,4}\s*$", re.IGNORECASE)
 _DEHYPHENATE = re.compile(r"(\w)-\n(\w)")
 
 
-# Cliente Docling reutilizado entre chamadas: o construtor é caro (baixa
-# modelos na primeira execução).
-_docling_converter: DocumentConverter | None = None
-
-
-def _get_docling() -> DocumentConverter:
-    global _docling_converter
-    if _docling_converter is None:
-        logger.info("Inicializando DocumentConverter (primeira execução baixa modelos).")
-        _docling_converter = DocumentConverter()
-    return _docling_converter
-
-
 def _extract_pages_pymupdf(pdf_bytes: bytes) -> list[str]:
     """Lista com o texto cru de cada página."""
     try:
@@ -78,17 +60,6 @@ def _extract_pages_pymupdf(pdf_bytes: bytes) -> list[str]:
     finally:
         doc.close()
     return pages
-
-
-def _extract_markdown_docling(pdf_bytes: bytes) -> str:
-    """Markdown estruturado do documento inteiro (já com headers/footers descartados)."""
-    converter = _get_docling()
-    stream = DocumentStream(name="paper.pdf", stream=io.BytesIO(pdf_bytes))
-    try:
-        result = converter.convert(stream)
-    except Exception as e:
-        raise PdfExtractionError(f"Docling falhou ao converter o PDF: {e}") from e
-    return result.document.export_to_markdown()
 
 
 def _strip_repeated_headers_footers(pages: list[str], threshold: float = 0.5) -> list[str]:
@@ -157,22 +128,14 @@ def extract(pdf_bytes: bytes, extractor: Extractor = "pymupdf") -> str:
     """
     Extrai texto limpo do PDF.
 
-    `extractor="pymupdf"` (default) deduplica headers/footers e devolve texto
-    plano — escolhido como default depois que Docling apresentou `std::bad_alloc`
-    em papers maiores no setup local (CPU/Windows), entregando saída truncada.
-    `extractor="docling"` continua disponível para papers curtos / setup com
-    GPU em que o markdown estruturado vale a troca. Em ambos os casos a saída
-    passa pelas mesmas regras de limpeza (`_clean`).
+    `extractor="pymupdf"` (único suportado) deduplica headers/footers e devolve
+    texto plano; a saída passa pelas regras de limpeza (`_clean`).
     """
     if not pdf_bytes:
         raise PdfExtractionError("pdf_bytes está vazio")
 
-    if extractor == "docling":
-        raw = _extract_markdown_docling(pdf_bytes)
-    elif extractor == "pymupdf":
-        pages = _strip_repeated_headers_footers(_extract_pages_pymupdf(pdf_bytes))
-        raw = "\n\n".join(pages)
-    else:
+    if extractor != "pymupdf":
         raise ValueError(f"extractor desconhecido: {extractor!r}")
 
-    return _clean(raw)
+    pages = _strip_repeated_headers_footers(_extract_pages_pymupdf(pdf_bytes))
+    return _clean("\n\n".join(pages))

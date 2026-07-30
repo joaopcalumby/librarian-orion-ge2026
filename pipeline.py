@@ -220,7 +220,7 @@ def main() -> int:
     parser.add_argument("--query", "-q", required=True, help="tema da busca no arXiv")
     parser.add_argument("--n", type=int, default=settings.ARXIV_DEFAULT_N, help="número de papers")
     parser.add_argument(
-        "--extractor", choices=["pymupdf", "docling"], default="pymupdf",
+        "--extractor", choices=["pymupdf"], default="pymupdf",
         help="extrator de PDF (default: pymupdf)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")

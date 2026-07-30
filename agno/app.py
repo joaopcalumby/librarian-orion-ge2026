@@ -1,0 +1,120 @@
+"""
+Agente conversacional do Librarian (aplicação externa).
+
+Divergimos do scaffold do professor de propósito: não usamos a `Knowledge` nem
+o `GeminiEmbedder` do Agno. A recuperação fica na aplicação interna, que já
+vetoriza com BGE-M3 e guarda os metadados de citação. Aqui o Agno cuida do que
+ele faz bem: conversa, memória de sessão e interface.
+
+Motivo detalhado em `_decisions/2026-07-29-librarian-agno-nao-usa-knowledge-proprio`
+do vault. Em resumo: o Qdrant do projeto guarda vetores BGE-M3 de 1024 dim com
+payload de um campo só; deixar o Agno embedar a query com Gemini colocaria a
+pergunta num espaço vetorial diferente do corpus, e os pontos recuperados não
+teriam texto para virar contexto.
+"""
+
+import os
+
+import httpx
+import uvicorn
+from agno.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.models.google import Gemini
+from agno.os import AgentOS
+from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()
+
+LIBRARIAN_API_URL = os.getenv("LIBRARIAN_API_URL", "http://api:8000")
+SEARCH_TIMEOUT_SECONDS = float(os.getenv("SEARCH_TIMEOUT_SECONDS", "120"))
+
+
+def buscar_documentos(consulta: str, limite: int = 5) -> dict:
+    """Busca trechos dos documentos indexados na biblioteca.
+
+    Use sempre que a pergunta do usuário depender do conteúdo dos documentos.
+    Cada trecho vem com o título, os autores e a URL do documento de origem,
+    que devem ser usados para citar a fonte na resposta.
+
+    Args:
+        consulta: O tema ou pergunta a buscar, em linguagem natural.
+        limite: Quantos trechos retornar (1 a 20). O padrão de 5 costuma bastar.
+
+    Returns:
+        Um dicionário com a lista `resultados`. Cada item traz `texto`,
+        `titulo`, `autores`, `url` e `score` (quanto maior, mais relevante).
+        Em caso de falha, traz a chave `erro` com a explicação.
+    """
+    try:
+        response = httpx.post(
+            f"{LIBRARIAN_API_URL}/search",
+            json={"query": consulta, "limit": limite},
+            timeout=SEARCH_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        # Devolvido como dado, não como exceção: assim o agente consegue
+        # explicar a falha ao usuário em vez de interromper a conversa.
+        return {"erro": f"não foi possível consultar a biblioteca: {e}"}
+
+    hits = response.json().get("results", [])
+    return {
+        "resultados": [
+            {
+                "texto": h["text"],
+                "titulo": h["title"],
+                "autores": h["authors"],
+                "url": h["url"],
+                "score": h["score"],
+            }
+            for h in hits
+        ]
+    }
+
+
+SYSTEM_PROMPT = """Você é o bibliotecário do Librarian, um assistente de pesquisa
+sobre a literatura técnica indexada nesta biblioteca.
+
+Regras que você não quebra:
+- Responda **apenas** com base nos trechos devolvidos por `buscar_documentos`.
+  Use a ferramenta antes de responder qualquer pergunta sobre conteúdo.
+- Cite sempre a fonte: título do documento e URL, ao lado da afirmação que ela
+  sustenta.
+- Se os trechos não responderem à pergunta, diga isso claramente e sugira como
+  reformular a busca. Não complete a lacuna com conhecimento próprio.
+- Não invente título, autor, URL ou número. Se não veio no trecho, não existe.
+- Responda em português do Brasil, de forma direta."""
+
+
+agent = Agent(
+    name="Bibliotecário",
+    model=Gemini(
+        id=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+        api_key=os.getenv("GEMINI_API_KEY"),
+    ),
+    tools=[buscar_documentos],
+    instructions=os.getenv("SYSTEM_PROMPT", SYSTEM_PROMPT),
+    db=PostgresDb(db_url=os.getenv("POSTGRES_DB_URL")),
+    add_history_to_context=True,
+    markdown=True,
+)
+
+agent_os = AgentOS(agents=[agent])
+app = agent_os.get_app()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# O AgentOS já registra `/health`; um segundo handler no mesmo caminho nunca
+# seria alcançado, então não declaramos um.
+
+
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="0.0.0.0", port=8008, reload=True)

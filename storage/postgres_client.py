@@ -167,3 +167,26 @@ def fetch_chunk_by_id(conn: psycopg.Connection, chunk_id: str) -> dict | None:
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM chunks_with_meta WHERE chunk_id = %s", (chunk_id,))
         return cur.fetchone()
+
+
+def fetch_chunks_by_ids(
+    conn: psycopg.Connection,
+    chunk_ids: Iterable[str],
+) -> dict[str, dict]:
+    """
+    Recupera vários chunks de uma vez, indexados por `chunk_id`.
+
+    Uma query em vez de N. Chunks sem linha correspondente simplesmente não
+    aparecem no retorno: runs antigos deixaram pontos órfãos no Qdrant, e a
+    busca não deve quebrar por causa deles.
+    """
+    ids = list(chunk_ids)
+    if not ids:
+        return {}
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM chunks_with_meta WHERE chunk_id = ANY(%s::uuid[])",
+            (ids,),
+        )
+        return {str(row["chunk_id"]): row for row in cur.fetchall()}

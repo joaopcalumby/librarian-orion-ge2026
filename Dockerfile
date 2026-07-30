@@ -23,12 +23,13 @@ COPY config/ ./config/
 COPY scraper/ ./scraper/
 COPY processing/ ./processing/
 COPY storage/ ./storage/
+COPY api/ ./api/
 COPY pipeline.py .
 
 # Cache do HuggingFace fora do código (volume monta aqui).
 ENV HF_HOME=/root/.cache/huggingface
 
-# Default: roda o pipeline; sobrescreva no compose ou via `docker run` para
-# passar --query, --n, etc.
-ENTRYPOINT ["python", "pipeline.py"]
-CMD ["--help"]
+# Default: sobe o servidor HTTP. O pipeline batch continua acessível com
+# `docker compose run --rm --entrypoint python api pipeline.py --query ...`.
+EXPOSE 8000
+CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]

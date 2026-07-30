@@ -41,10 +41,12 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  pipeline:
+  api:
     build: .
-    image: librarian-pipeline:latest
-    container_name: librarian_pipeline
+    image: librarian-api:latest
+    container_name: librarian_api
+    ports:
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,9 +78,28 @@ services:
       # Persiste cache do HuggingFace entre execuções para não rebaixar
       # os 2.3GB do BGE-M3 toda vez.
       - hf_cache:/root/.cache/huggingface
-    profiles:
-      - run   # só sobe quando explicitamente requisitado
-                          # (docker compose --profile run run --rm pipeline --query ...)
+    restart: unless-stopped
+
+  # Aplicação externa: agente conversacional. Fala HTTP com o `api`, não toca
+  # em Postgres/Qdrant do pipeline. O Postgres aqui é só a memória de sessão
+  # do próprio Agno, num database separado no mesmo servidor.
+  agno:
+    build: ./agno
+    image: librarian-agno:latest
+    container_name: librarian_agno
+    ports:
+      - "8008:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      LIBRARIAN_API_URL: http://api:8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
+      POSTGRES_DB_URL: postgresql+psycopg://${POSTGRES_USER:-librarian}:${POSTGRES_PASSWORD:-librarian}@postgres:5432/${POSTGRES_DB_AGNO:-agno}
+    restart: unless-stopped
 
 volumes:
   minio_data:

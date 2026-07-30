@@ -38,6 +38,7 @@ Thumbs.db
 # --- Ferramentas locais (não versionar) ---
 .claude/
 openspec/
+graphify-out/
 
 # --- Testes ---
 .pytest_cache/

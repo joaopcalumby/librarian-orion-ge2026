@@ -41,6 +41,32 @@ def _get_model():
     return _model
 
 
+def vectorize_query(text: str) -> list[float]:
+    """
+    Vetoriza um texto de busca e devolve o vetor (1024 dim).
+
+    Usa o mesmo modelo da ingestão de propósito: query e chunk precisam viver
+    no mesmo espaço vetorial, senão a similaridade não significa nada.
+    """
+    if not text or not text.strip():
+        raise ValueError("query vazia")
+
+    model = _get_model()
+    vector = model.encode(
+        [text],
+        convert_to_numpy=True,
+        show_progress_bar=False,
+        normalize_embeddings=True,
+    )[0]
+
+    if vector.shape[0] != settings.VECTOR_DIM:
+        raise RuntimeError(
+            f"Dimensão inesperada: {vector.shape[0]} (esperado {settings.VECTOR_DIM})"
+        )
+
+    return vector.tolist()
+
+
 def vectorize_chunks(chunks: list[dict], batch_size: int = 4) -> list[dict]:
     """
     Recebe os chunks do `chunker` e devolve a mesma lista enriquecida com

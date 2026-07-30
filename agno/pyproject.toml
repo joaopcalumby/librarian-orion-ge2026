@@ -1,0 +1,25 @@
+[project]
+name = "librarian-agno"
+version = "0.1.0"
+description = "Agente conversacional do Librarian sobre a API interna de busca"
+requires-python = ">=3.12"
+dependencies = [
+    "agno[app]>=2.6.18",
+    "fastapi>=0.137.2",
+    "google-genai>=2.0.0,<2.5.0",
+    "google-generativeai>=0.8.6",
+    "httpx>=0.27.0",
+    "psycopg[binary]>=3.3.4",
+    "python-dotenv>=1.2.2",
+    # Exigido pelo router de agentes do AgentOS, que declara endpoints com
+    # form data. Sem isso o app quebra no import, não em runtime.
+    "python-multipart>=0.0.12",
+    "sqlalchemy>=2.0.51",
+    "uvicorn[standard]>=0.49.0",
+]
+
+# Removidos do scaffold original do professor:
+# - fastembed e qdrant-client: só serviam à `Knowledge`/vectordb do Agno, que
+#   não usamos (a busca é da aplicação interna).
+# - psycopg2-binary: a URL de conexão usa `postgresql+psycopg://`, que é
+#   psycopg v3. O binding v2 era peso morto.

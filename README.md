@@ -351,5 +351,3 @@ Esta é a **v1.0.5**, marcada com a tag `v1.0.5`. É a versão que encerra o esc
 | `main` | Versão publicada |
 | `dev` | Desenvolvimento |
 | `ge` | Entrega congelada do Grupo de Estudos: apenas a aplicação interna, sem busca nem agente |
-
-Uma v2 está prevista como projeto pessoal, fora dos requisitos do Grupo de Estudos, sem data definida.

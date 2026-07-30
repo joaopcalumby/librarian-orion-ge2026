@@ -162,13 +162,6 @@ def insert_chunks(
     return len(rows)
 
 
-def fetch_chunk_by_id(conn: psycopg.Connection, chunk_id: str) -> dict | None:
-    """Recupera um chunk completo (com metadados do paper) pelo `chunk_id`."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM chunks_with_meta WHERE chunk_id = %s", (chunk_id,))
-        return cur.fetchone()
-
-
 def fetch_chunks_by_ids(
     conn: psycopg.Connection,
     chunk_ids: Iterable[str],

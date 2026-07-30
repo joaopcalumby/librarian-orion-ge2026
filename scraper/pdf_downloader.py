@@ -36,7 +36,6 @@ class DownloadResult:
     arxiv_id: str
     success: bool
     pdf_object: Optional[str] = None
-    metadata_object: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -111,17 +110,12 @@ def download_paper(
 
     try:
         pdf_obj = minio_client.upload_pdf(client, bucket, session_id, arxiv_id, pdf_bytes)
-        meta_obj = minio_client.upload_metadata(client, bucket, session_id, arxiv_id, paper)
+        minio_client.upload_metadata(client, bucket, session_id, arxiv_id, paper)
     except S3Error as e:
         logger.error("Paper %s falhou no upload Bronze: %s", arxiv_id, e)
         return DownloadResult(arxiv_id=arxiv_id, success=False, error=f"MinIO: {e}")
 
-    return DownloadResult(
-        arxiv_id=arxiv_id,
-        success=True,
-        pdf_object=pdf_obj,
-        metadata_object=meta_obj,
-    )
+    return DownloadResult(arxiv_id=arxiv_id, success=True, pdf_object=pdf_obj)
 
 
 def download_papers(

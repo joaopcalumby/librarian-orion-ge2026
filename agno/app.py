@@ -1,16 +1,9 @@
 """
 Agente conversacional do Librarian (aplicação externa).
 
-Divergimos do scaffold do professor de propósito: não usamos a `Knowledge` nem
-o `GeminiEmbedder` do Agno. A recuperação fica na aplicação interna, que já
-vetoriza com BGE-M3 e guarda os metadados de citação. Aqui o Agno cuida do que
-ele faz bem: conversa, memória de sessão e interface.
-
-Motivo detalhado em `_decisions/2026-07-29-librarian-agno-nao-usa-knowledge-proprio`
-do vault. Em resumo: o Qdrant do projeto guarda vetores BGE-M3 de 1024 dim com
-payload de um campo só; deixar o Agno embedar a query com Gemini colocaria a
-pergunta num espaço vetorial diferente do corpus, e os pontos recuperados não
-teriam texto para virar contexto.
+O Agno cuida da conversa, da memória de sessão e da interface. A recuperação
+fica com a aplicação interna: o agente chama `POST /search` por uma tool, e é
+de lá que vêm os trechos e os metadados de citação.
 """
 
 import os

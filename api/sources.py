@@ -9,16 +9,14 @@ ALLOWED_HOSTS: frozenset[str] = frozenset({
 })
 
 
-def is_allowed(url: str) -> bool:
+def host_of(url: str) -> str:
+    """Host da URL em minúsculas, sem o prefixo `www.`. String vazia se não parsear."""
     try:
         host = (urlparse(url).hostname or "").lower()
-    except Exception:
-        return False
-    if host.startswith("www."):
-        host = host[4:]
-    return host in ALLOWED_HOSTS
-
-
-def host_of(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
     return host[4:] if host.startswith("www.") else host
+
+
+def is_allowed(url: str) -> bool:
+    return host_of(url) in ALLOWED_HOSTS

@@ -55,17 +55,18 @@ def chunk_text(
     """
     Divide `text` em chunks e anexa metadados.
 
-    `paper_meta` deve conter no mínimo `arxiv_id`, `title`, `authors`, `arxiv_url`.
-    Cada chunk retornado é um dict com:
-        chunk_id, arxiv_id, title, authors, arxiv_url, chunk_index, chunk_text
+    `paper_meta` deve conter `arxiv_id`. Cada chunk retornado é um dict com:
+        chunk_id, arxiv_id, chunk_index, chunk_text
+
+    Os metadados de citação vivem na tabela `papers` e voltam pela view
+    `chunks_with_meta`.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size deve ser > 0")
     if chunk_overlap < 0 or chunk_overlap >= chunk_size:
         raise ValueError("chunk_overlap deve estar em [0, chunk_size)")
-    for required in ("arxiv_id", "title", "authors", "arxiv_url"):
-        if required not in paper_meta:
-            raise KeyError(f"paper_meta sem campo obrigatório: {required!r}")
+    if "arxiv_id" not in paper_meta:
+        raise KeyError("paper_meta sem campo obrigatório: 'arxiv_id'")
 
     cleaned = text.strip() if text else ""
     if not cleaned:
@@ -103,9 +104,6 @@ def _build_chunk(piece: str, index: int, paper_meta: dict) -> dict:
     return {
         "chunk_id": str(uuid.uuid4()),
         "arxiv_id": paper_meta["arxiv_id"],
-        "title": paper_meta["title"],
-        "authors": paper_meta["authors"],
-        "arxiv_url": paper_meta["arxiv_url"],
         "chunk_index": index,
         "chunk_text": piece,
     }

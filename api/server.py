@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     logger.info("Encerrando.")
 
 
-app = FastAPI(title="Librarian API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Librarian API", version="1.0.5", lifespan=lifespan)
 
 
 class IngestResponse(BaseModel):

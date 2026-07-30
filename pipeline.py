@@ -46,7 +46,7 @@ class PaperOutcome:
     success: bool
     chunks: int = 0
     error: Optional[str] = None
-    stage: Optional[str] = None  # estágio onde falhou
+    stage: Optional[str] = None
 
 
 @dataclass
@@ -71,7 +71,6 @@ def _setup_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Silenciar libs ruidosas
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
@@ -80,16 +79,14 @@ def _process_paper(
     paper: dict,
     session_id: str,
     qdrant_client,
-    extractor: str,
 ) -> PaperOutcome:
     """Encadeia extração -> chunking -> vetorização -> Postgres+Qdrant para um paper."""
     arxiv_id = paper["arxiv_id"]
-    minio_obj = paper["_minio_pdf_object"]  # injetado pelo orquestrador
     pdf_bytes = paper["_pdf_bytes"]
 
     try:
         logger.info("[%s] extraindo texto...", arxiv_id)
-        text = extract(pdf_bytes, extractor=extractor)
+        text = extract(pdf_bytes)
     except PdfExtractionError as e:
         return PaperOutcome(arxiv_id=arxiv_id, success=False, stage="extract", error=str(e))
 
@@ -124,23 +121,20 @@ def _process_paper(
     return PaperOutcome(arxiv_id=arxiv_id, success=True, chunks=len(chunks))
 
 
-def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf") -> RunSummary:
+def run(query: str, n: int = settings.ARXIV_DEFAULT_N) -> RunSummary:
     session_id = f"sess-{uuid.uuid4().hex[:8]}"
     summary = RunSummary(session_id=session_id, query=query, requested=n)
 
     logger.info("=" * 60)
-    logger.info("session_id=%s  query=%r  n=%d  extractor=%s",
-                session_id, query, n, extractor)
+    logger.info("session_id=%s  query=%r  n=%d", session_id, query, n)
     logger.info("=" * 60)
 
-    # 1. Busca arXiv
     papers = search(query, n=n)
     if not papers:
         logger.warning("Nenhum paper retornado para %r.", query)
         return summary
     logger.info("arXiv retornou %d papers.", len(papers))
 
-    # 2. Download para MinIO Bronze
     minio = get_minio_client(
         settings.MINIO_ENDPOINT, settings.MINIO_ACCESS_KEY,
         settings.MINIO_SECRET_KEY, settings.MINIO_SECURE,
@@ -151,8 +145,6 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
         minio, settings.MINIO_BUCKET_BRONZE, session_id, papers
     )
 
-    # Re-download em memória para passar pra extração (evita re-baixar do MinIO)
-    # — o download_papers já gravou os bytes; aqui leio de volta apenas dos sucessos.
     by_id = {p["arxiv_id"]: p for p in papers}
     pdfs_for_pipeline: list[dict] = []
     for r in download_results:
@@ -161,7 +153,8 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
                 PaperOutcome(arxiv_id=r.arxiv_id, success=False, stage="download", error=r.error)
             )
             continue
-        # Lê o PDF do MinIO de volta — é a forma honesta de provar o Bronze
+        # Relê do MinIO em vez de reaproveitar os bytes do download: é o que
+        # prova que o Bronze foi realmente gravado e é legível.
         response = minio.get_object(settings.MINIO_BUCKET_BRONZE, r.pdf_object)
         try:
             pdf_bytes = response.read()
@@ -169,7 +162,6 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
             response.close()
             response.release_conn()
         paper = by_id[r.arxiv_id]
-        paper["_minio_pdf_object"] = r.pdf_object
         paper["_pdf_bytes"] = pdf_bytes
         pdfs_for_pipeline.append(paper)
 
@@ -178,15 +170,15 @@ def run(query: str, n: int = settings.ARXIV_DEFAULT_N, extractor: str = "pymupdf
     if not pdfs_for_pipeline:
         return summary
 
-    # 3-6. Inicializa schemas/coleções uma vez; processamento por paper abre
-    # sua própria transação para isolar falhas.
+    # Schemas e coleções uma vez só; cada paper abre a própria transação
+    # depois, para que uma falha não derrube os demais.
     qdrant = qdrant_connect()
     ensure_collection(qdrant)
     with postgres_client.session() as pg_conn:
         postgres_client.init_schema(pg_conn)
 
     for paper in pdfs_for_pipeline:
-        outcome = _process_paper(paper, session_id, qdrant, extractor)
+        outcome = _process_paper(paper, session_id, qdrant)
         summary.outcomes.append(outcome)
         if outcome.success:
             logger.info("[%s] ✓ %d chunks persistidos.", outcome.arxiv_id, outcome.chunks)
@@ -219,16 +211,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Librarian pipeline (arXiv -> Bronze -> Ouro)")
     parser.add_argument("--query", "-q", required=True, help="tema da busca no arXiv")
     parser.add_argument("--n", type=int, default=settings.ARXIV_DEFAULT_N, help="número de papers")
-    parser.add_argument(
-        "--extractor", choices=["pymupdf"], default="pymupdf",
-        help="extrator de PDF (default: pymupdf)",
-    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
     _setup_logging(args.verbose)
     t0 = time.time()
-    summary = run(args.query, n=args.n, extractor=args.extractor)
+    summary = run(args.query, n=args.n)
     logger.info("Tempo total: %.1fs", time.time() - t0)
     _print_summary(summary)
 

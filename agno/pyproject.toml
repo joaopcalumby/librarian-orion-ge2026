@@ -1,6 +1,6 @@
 [project]
 name = "librarian-agno"
-version = "0.1.0"
+version = "1.0.5"
 description = "Agente conversacional do Librarian sobre a API interna de busca"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,9 +17,3 @@ dependencies = [
     "sqlalchemy>=2.0.51",
     "uvicorn[standard]>=0.49.0",
 ]
-
-# Removidos do scaffold original do professor:
-# - fastembed e qdrant-client: só serviam à `Knowledge`/vectordb do Agno, que
-#   não usamos (a busca é da aplicação interna).
-# - psycopg2-binary: a URL de conexão usa `postgresql+psycopg://`, que é
-#   psycopg v3. O binding v2 era peso morto.

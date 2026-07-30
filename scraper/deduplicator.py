@@ -1,11 +1,9 @@
 """
-Deduplicação de papers por `arxiv_id`.
+Deduplicação de papers por `arxiv_id`, identificador único garantido pela API
+do arXiv.
 
-A Primeira Entrega deduplicava por DOI + ano, com persistência em disco
-(`logs/seen_dois.json`). Para a Segunda Entrega o `arxiv_id` é identificador
-único garantido pela própria API do arXiv — não há necessidade de filtro por
-ano, e a deduplicação por execução é suficiente. Persistência cross-execução
-fica para a fase futura de "busca incremental".
+O escopo é uma execução: a deduplicação entre execuções faz parte da busca
+incremental, ainda não implementada.
 """
 
 from typing import Iterable

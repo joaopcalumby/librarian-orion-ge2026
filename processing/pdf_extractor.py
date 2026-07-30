@@ -1,18 +1,12 @@
 """
 Extração de texto limpo de PDFs de papers.
 
-Extrator único: `pymupdf` — rápido, texto cru por página, com dedup explícito
-de headers/footers olhando o topo e a base de cada página.
+Usa PyMuPDF para ler o texto cru de cada página, deduplica headers e footers
+comparando o topo e a base entre páginas, e aplica as regras de limpeza:
 
-Sobre a saída aplicamos as regras de limpeza estrutural:
 - Dehifenização de quebras de linha (`word-\nword` -> `wordword`).
 - Remoção de linhas que são só números de página.
 - Corte da seção de referências bibliográficas até o fim.
-
-O Docling foi avaliado e descartado: dava `std::bad_alloc` em papers maiores
-no setup local (CPU/Windows) e entregava saída truncada, além de arrastar
-torch/transformers próprios para a imagem. PyMuPDF entrega texto completo em
-menos de 1s.
 """
 
 from __future__ import annotations
@@ -20,13 +14,10 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
-from typing import Literal
 
 import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
-
-Extractor = Literal["pymupdf"]
 
 
 class PdfExtractionError(Exception):
@@ -119,23 +110,14 @@ def _clean(text: str) -> str:
     text = _dehyphenate(text)
     text = _drop_page_numbers(text)
     text = _cut_references(text)
-    # Compactar 3+ quebras em uma.
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-def extract(pdf_bytes: bytes, extractor: Extractor = "pymupdf") -> str:
-    """
-    Extrai texto limpo do PDF.
-
-    `extractor="pymupdf"` (único suportado) deduplica headers/footers e devolve
-    texto plano; a saída passa pelas regras de limpeza (`_clean`).
-    """
+def extract(pdf_bytes: bytes) -> str:
+    """Extrai texto limpo do PDF: dedup de headers/footers mais as regras de `_clean`."""
     if not pdf_bytes:
         raise PdfExtractionError("pdf_bytes está vazio")
-
-    if extractor != "pymupdf":
-        raise ValueError(f"extractor desconhecido: {extractor!r}")
 
     pages = _strip_repeated_headers_footers(_extract_pages_pymupdf(pdf_bytes))
     return _clean("\n\n".join(pages))

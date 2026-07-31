@@ -49,7 +49,7 @@ O projeto nasceu dentro do Grupo de Estudos, com requisitos definidos pelo instr
 | Resiliência por documento | Falha em um paper marca aquele paper e o pipeline continua nos demais |
 | Separação entre aplicação interna e externa | A interna não sabe que o agente existe; a externa fala HTTP com ela e pode ser reescrita em qualquer linguagem |
 | Orquestração de agente com Agno | `agno/app.py`, com AgentOS servindo a interface e PostgreSQL guardando a memória de sessão |
-| Modelo de linguagem Gemini | `Gemini` do Agno, modelo configurável por variável de ambiente |
+| Modelo de linguagem | `Groq` do Agno, modelo configurável por variável de ambiente |
 
 A separação entre interna e externa foi pedida para que a entrega do curso não dependesse das partes fora do escopo dele, que eram o modelo de linguagem e a interface. Ela acabou virando a melhor propriedade da arquitetura: a interna sobe e funciona sem o agente, e o agente pode ser trocado sem tocar no índice.
 
@@ -61,7 +61,7 @@ A separação entre interna e externa foi pedida para que a entrega do curso nã
 
 ```
                     ┌──────────────────────────────┐
-   usuário  ───────►│  agente (Agno + Gemini)      │  :8008
+   usuário  ───────►│  agente (Agno + Groq)        │  :8008
                     │  memória de sessão: Postgres │
                     └──────────────┬───────────────┘
                                    │ tool buscar_documentos
@@ -158,13 +158,13 @@ Sobem cinco serviços: `api` (8000), `agno` (8008), `postgres` (5432), `qdrant` 
 
 Na primeira execução a API baixa o modelo BGE-M3, cerca de 2.3GB, para um volume nomeado. As execuções seguintes reaproveitam esse volume.
 
-Para habilitar o agente, crie o database dele uma única vez e informe a chave do Gemini:
+Para habilitar o agente, crie o database dele uma única vez e informe a chave do Groq:
 
 ```bash
 docker exec librarian_postgres psql -U librarian -c "CREATE DATABASE agno"
 ```
 
-Preencha `GEMINI_API_KEY` no `.env` e suba o serviço:
+Preencha `GROQ_API_KEY` no `.env` e suba o serviço:
 
 ```bash
 docker compose up -d agno
@@ -183,6 +183,8 @@ Estado verificado nesta versão, com a stack rodando localmente.
 **Busca.** Uma consulta sobre um tema presente no corpus retorna os trechos certos com o score de similaridade, o título, os autores e a URL do documento. Consultas de temas diferentes recuperam documentos diferentes: uma pergunta sobre redes neurais em grafos traz os papers do arXiv, uma pergunta introdutória sobre aprendizado de máquina traz o artigo do portal.
 
 **Validação de entrada.** Query vazia responde `400`, `limit` fora da faixa responde `422`, domínio fora da whitelist responde `404`.
+
+**O agente conversa.** Perguntado sobre um paper presente no índice, ele chama `buscar_documentos`, responde em português e cita o título e a URL do documento ao lado da afirmação. Perguntado sobre um paper que não está indexado, ele busca, não encontra e diz que não encontrou, sugerindo reformular a consulta, sem inventar título, autor ou conclusão. As duas regras centrais do prompt do sistema se sustentam na prática.
 
 **Desempenho.** A imagem da aplicação interna tem 2.69GB. A primeira busca depois de subir o container carrega o modelo BGE-M3 e leva por volta de um minuto e meio.
 
@@ -240,6 +242,16 @@ curl http://localhost:8008/health
 
 O AgentOS expõe uma API HTTP, não uma interface de chat pronta. As rotas ficam documentadas em `http://localhost:8008/docs`, e `http://localhost:8008/agents` mostra o agente com a ferramenta de busca registrada. Uma interface gráfica é front-end separado, ainda não construído.
 
+Conversando com o agente:
+
+```bash
+curl -X POST "http://localhost:8008/agents/bibliotec%C3%A1rio/runs" \
+  -F "message=Sobre o que trata o paper MECCH?" \
+  -F "stream=false"
+```
+
+A resposta traz `content` com o texto e `tools` com as chamadas de ferramenta. Se `tools` vier vazio, o agente respondeu sem consultar o índice — vale ler o `content` inteiro antes de concluir qualquer coisa, porque erro da API do modelo chega por ali.
+
 ### Pipeline batch do arXiv
 
 Busca papers sobre um tema, guarda os originais no Bronze e processa tudo até o índice:
@@ -267,8 +279,8 @@ Tudo vem de variáveis de ambiente, com defaults em `config/settings.py`.
 | `ARXIV_REQUEST_DELAY_SECONDS` | `3.0` | Intervalo entre downloads, exigido pelo arXiv |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `librarian` | Credenciais e nome do banco do Ouro |
 | `POSTGRES_DB_AGNO` | `agno` | Database da memória do agente |
-| `GEMINI_API_KEY` | — | Chave do modelo do agente |
-| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Modelo de linguagem do agente |
+| `GROQ_API_KEY` | — | Chave do modelo do agente |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Modelo de linguagem do agente |
 
 ---
 
@@ -277,7 +289,7 @@ Tudo vem de variáveis de ambiente, com defaults em `config/settings.py`.
 | Camada | Ferramenta |
 |---|---|
 | Servidor HTTP | FastAPI + uvicorn |
-| Agente | Agno (AgentOS) + Gemini |
+| Agente | Agno (AgentOS) + Groq |
 | Cliente HTTP | httpx |
 | Extração de PDF | PyMuPDF |
 | Extração de HTML | trafilatura |
@@ -339,6 +351,8 @@ librarian-orion-ge2026/
 **Não há sessões efêmeras.** Tudo que é indexado permanece. A limpeza por sessão está prevista e não foi implementada.
 
 **Não há interface gráfica.** O agente é consumido pela API do AgentOS. Um front-end de chat está previsto e não foi construído.
+
+**O plano gratuito do Groq limita tokens por minuto, e o teto varia por modelo.** O `llama-3.3-70b-versatile` tem 12 mil por minuto, e outros modelos do catálogo têm 8 mil ou menos. Cada pergunta carrega os trechos recuperados para dentro do prompt, e o histórico da conversa soma a cada turno, então uma sequência de perguntas seguidas pode esbarrar no limite e devolver `rate_limit_exceeded`. As alavancas, se apertar, são reduzir o `limite` de trechos por busca ou encurtar o chunk.
 
 ---
 

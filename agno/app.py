@@ -12,7 +12,7 @@ import httpx
 import uvicorn
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.google import Gemini
+from agno.models.groq import Groq
 from agno.os import AgentOS
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,9 +82,9 @@ Regras que você não quebra:
 
 agent = Agent(
     name="Bibliotecário",
-    model=Gemini(
-        id=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-        api_key=os.getenv("GEMINI_API_KEY"),
+    model=Groq(
+        id=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        api_key=os.getenv("GROQ_API_KEY"),
     ),
     tools=[buscar_documentos],
     instructions=os.getenv("SYSTEM_PROMPT", SYSTEM_PROMPT),
